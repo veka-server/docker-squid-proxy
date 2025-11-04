@@ -1,7 +1,7 @@
 FROM alpine:3.19
 
-# Installer Squid et shadow
-RUN apk add --no-cache squid shadow
+# Installer Squid 
+RUN apk add --no-cache squid 
 
 # Donner un shell utilisable à l’utilisateur squid
 RUN usermod -s /bin/sh squid
