@@ -1,3 +1,4 @@
 # Domaines autorisés
 .openrouter.ai
-.google.com
+.huggingface.co
+.ollama.com
