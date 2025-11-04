@@ -1,7 +1,8 @@
 FROM alpine:latest
 
-# Installer Squid
-RUN apk add --no-cache squid
+# Installer Squid et nettoyer le cache
+RUN apk add --no-cache squid && \
+    rm -rf /var/cache/apk/*
 
 # Copier le fichier de white liste de domaine
 COPY ./whitelist.txt /etc/squid/whitelist.txt
