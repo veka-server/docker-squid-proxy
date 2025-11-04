@@ -1,0 +1,2 @@
+# Domaines autorisés
+.openrouter.ai
