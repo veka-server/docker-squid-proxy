@@ -1,10 +1,7 @@
-FROM alpine:3.19
+FROM alpine:latest
 
-# Installer Squid 
-RUN apk add --no-cache squid 
-
-# Donner un shell utilisable à l’utilisateur squid
-RUN usermod -s /bin/sh squid
+# Installer Squid
+RUN apk add --no-cache squid
 
 # Copier le fichier de white liste de domaine
 COPY ./whitelist.txt /etc/squid/whitelist.txt
@@ -33,4 +30,3 @@ EXPOSE 3128
 
 # Lancer Squid en avant-plan
 CMD ["squid", "-N", "-d", "1"]
-
