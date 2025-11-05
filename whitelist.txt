@@ -1,4 +1,9 @@
 # Domaines autorisés
+
+# open webui
 .openrouter.ai
-.huggingface.co
+
+# Ollama
 registry.ollama.ai
+.cloudflarestorage.com
+.huggingface.co
