@@ -1,4 +1,4 @@
 # Domaines autorisés
 .openrouter.ai
 .huggingface.co
-.ollama.com
+registry.ollama.ai
