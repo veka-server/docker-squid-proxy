@@ -23,11 +23,11 @@ RUN echo "http_port 3128" > /etc/squid/squid.conf && \
 
 # Préparer et initialiser le cache
 RUN mkdir -p /var/cache/squid /var/log/squid /var/lib/squid && \
-    chown -R squid:squid /var/cache/squid /var/log/squid /var/lib/squid && \
-    su -s /bin/sh squid -c "/usr/sbin/squid -Nz"
+    chown -R squid:squid /var/cache/squid /var/log/squid /var/lib/squid 
+#    su -s /bin/sh squid -c "/usr/sbin/squid -Nz"
 
 # Exposer le port du proxy
 EXPOSE 3128
 
-# Lancer Squid en avant-plan
-CMD ["squid", "-N", "-d", "1"]
+# Initialisation du cache au runtime
+ENTRYPOINT ["/bin/sh", "-c", "squid -Nz && squid -N"]
