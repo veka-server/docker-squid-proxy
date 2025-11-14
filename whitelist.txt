@@ -7,5 +7,5 @@
 registry.ollama.ai
 .cloudflarestorage.com
 .huggingface.co
-.hf.co
 hf.co
+
