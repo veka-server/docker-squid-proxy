@@ -8,7 +8,8 @@ registry.ollama.ai
 .cloudflarestorage.com
 .huggingface.co
 .hf.co
-reddit.com
+.reddit.com
+
 
 
 
