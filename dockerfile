@@ -6,6 +6,7 @@ RUN apk add --no-cache squid su-exec && \
 
 # Copier le fichier de white liste de domaine
 COPY ./whitelist.txt /etc/squid/whitelist.txt
+COPY ./whitelist-ips.txt /etc/squid/whitelist-ips.txt
 
 # Configurer Squid
 RUN echo "http_port 3128" > /etc/squid/squid.conf && \
