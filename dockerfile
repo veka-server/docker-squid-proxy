@@ -29,5 +29,7 @@ RUN mkdir -p /var/cache/squid /var/log/squid /var/lib/squid && \
 # Exposer le port du proxy
 EXPOSE 3128
 
-# Initialisation du cache au runtime
-ENTRYPOINT ["/bin/sh", "-c", "squid -Nz && squid -N"]
+# Nettoie le pid file orphelin (résidu d'un arrêt sale), initialise le cache,
+# puis exec squid en foreground pour qu'il devienne PID 1 et reçoive
+# correctement les signaux (SIGTERM sur docker stop -> arrêt propre)
+ENTRYPOINT ["/bin/sh", "-c", "rm -f /var/lib/squid/squid.pid && squid -Nz && exec squid -N -d 1"]
