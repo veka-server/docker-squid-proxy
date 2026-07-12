@@ -1,7 +1,7 @@
 FROM alpine:latest
 
 # Installer Squid et nettoyer le cache
-RUN apk add --no-cache squid && \
+RUN apk add --no-cache squid su-exec && \
     rm -rf /var/cache/apk/*
 
 # Copier le fichier de white liste de domaine
@@ -32,4 +32,5 @@ EXPOSE 3128
 # Nettoie le pid file orphelin (résidu d'un arrêt sale), initialise le cache,
 # puis exec squid en foreground pour qu'il devienne PID 1 et reçoive
 # correctement les signaux (SIGTERM sur docker stop -> arrêt propre)
-ENTRYPOINT ["/bin/sh", "-c", "crond && rm -f /var/lib/squid/squid.pid && squid -Nz && exec squid -N -d 1"]
+USER root
+ENTRYPOINT ["/bin/sh", "-c", "crond -l 8 && rm -f /var/lib/squid/squid.pid && squid -Nz && exec su-exec squid squid -N -d 1"]
