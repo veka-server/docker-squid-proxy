@@ -18,8 +18,8 @@ RUN echo "http_port 3128" > /etc/squid/squid.conf && \
     echo "minimum_object_size 0 KB" >> /etc/squid/squid.conf && \
     echo "acl whitelist_domains dstdomain \"/etc/squid/whitelist.txt\"" >> /etc/squid/squid.conf && \
     echo "acl whitelist_ips dst \"/etc/squid/whitelist-ips.txt\"" >> /etc/squid/squid.conf && \
-    echo "http_access allow whitelist_domains" >> /etc/squid/squid.conf && \
     echo "http_access allow whitelist_ips" >> /etc/squid/squid.conf && \
+    echo "http_access allow whitelist_domains" >> /etc/squid/squid.conf && \
     echo "http_access deny all" >> /etc/squid/squid.conf && \
     echo "access_log stdio:/var/log/squid/access.log squid" >> /etc/squid/squid.conf && \
     echo "cache_log /var/log/squid/cache.log" >> /etc/squid/squid.conf
