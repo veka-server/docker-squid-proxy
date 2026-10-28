@@ -13,6 +13,9 @@
   --ko: #d03b3b;
   --ko-text: #b02828;
   --ko-bg: rgba(208, 59, 59, .10);
+  --tor: #2a78d6;
+  --tor-text: #1d5fae;
+  --tor-bg: rgba(42, 120, 214, .10);
   --grid: #e1e0d9;
   --axis: #c3c2b7;
   --hover: rgba(11, 11, 11, .035);
@@ -35,6 +38,9 @@
   --ko: #e05252;
   --ko-text: #f07a7a;
   --ko-bg: rgba(208, 59, 59, .18);
+  --tor: #3987e5;
+  --tor-text: #7cb1f0;
+  --tor-bg: rgba(57, 135, 229, .18);
   --grid: #2c2c2a;
   --axis: #383835;
   --hover: rgba(255, 255, 255, .035);
@@ -124,6 +130,9 @@ main { max-width: 1480px; margin: 0 auto; padding: 22px 28px 48px; }
 .sw { display: inline-block; width: 9px; height: 9px; border-radius: 3px; }
 .sw.ok { background: var(--ok); }
 .sw.ko { background: var(--ko); }
+.sw.tor { background: var(--tor); }
+body:not(.has-tor) .tor-only { display: none !important; }
+body.has-tor .kpis { grid-template-columns: repeat(5, 1fr); }
 
 /* ---------- Cartes ---------- */
 .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); }
@@ -140,6 +149,7 @@ h2 { margin: 0; font-size: 13.5px; font-weight: 600; }
 .chart .axis { fill: var(--muted); font-size: 11px; }
 .chart .b-ok { fill: var(--ok); }
 .chart .b-ko { fill: var(--ko); }
+.chart .b-tor { fill: var(--tor); }
 .chart .hit { fill: transparent; cursor: default; }
 .chart .hit:hover { fill: var(--hover); }
 .tip {
@@ -181,6 +191,8 @@ td.time { color: var(--text-2); font-variant-numeric: tabular-nums; }
 .pill svg { width: 12px; height: 12px; stroke-width: 2.6; }
 .pill.ok { color: var(--ok-text); background: var(--ok-bg); }
 .pill.ko { color: var(--ko-text); background: var(--ko-bg); }
+.pill.tor { color: var(--tor-text); background: var(--tor-bg); }
+.tag.tor { background: var(--tor-bg); color: var(--tor-text); }
 .tag { display: inline-block; padding: 1px 7px; border-radius: 6px; background: var(--surface-2); font-size: 12px; color: var(--text-2); }
 .tag.none { font-style: italic; color: var(--muted); }
 .code-err { color: var(--ko-text); }
@@ -243,7 +255,7 @@ tr.detail td { white-space: normal; background: var(--surface-2); padding-top: 1
 }
 @media (max-width: 720px) {
   main, .topbar { padding-left: 14px; padding-right: 14px; }
-  .kpis { grid-template-columns: repeat(2, 1fr); }
+  .kpis, body.has-tor .kpis { grid-template-columns: repeat(2, 1fr); }
   .sub { display: none; }
 }
 @media (prefers-reduced-motion: reduce) {

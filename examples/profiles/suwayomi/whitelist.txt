@@ -1,0 +1,5 @@
+# Sortent en direct ; tout le reste passe par Tor (voir profile.conf)
+allmanga.to
+mkissa.to
+monip.org
+www.monip.org

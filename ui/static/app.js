@@ -25,6 +25,14 @@ document.addEventListener("DOMContentLoaded", () => {
     return s;
   };
   const ICON_OK = ["m5 12.5 4.5 4.5L19 7.5"], ICON_KO = ["M7 7l10 10M17 7 7 17"];
+  const ICON_TOR = ["M4 12h13", "m12 6 6 6-6 6"];
+  const DEC = {
+    allowed: { cls: "ok", label: "Autorisée", icon: ICON_OK },
+    tor: { cls: "tor", label: "Via Tor", icon: ICON_TOR },
+    denied: { cls: "ko", label: "Refusée", icon: ICON_KO },
+  };
+  let torSeen = false;
+  const markTor = (on) => { if (on && !torSeen) { torSeen = true; document.body.classList.add("has-tor"); $("#top-title").textContent = "Hors whitelist"; } };
   const ICON_COPY = ["M9 9h10v10H9z", "M5 15V5h10"];
 
   const nf = new Intl.NumberFormat("fr-FR");
@@ -104,9 +112,10 @@ document.addEventListener("DOMContentLoaded", () => {
     const tr = el("tr", "r" + (isNew ? " new" : ""));
     tr.dataset.id = r.id;
     tr.appendChild(el("td", "time", fmtTime(r.ts, multiDay())));
-    const dec = el("td"); const ok = r.decision === "allowed";
-    const pill = el("span", "pill " + (ok ? "ok" : "ko"));
-    pill.appendChild(svg(ok ? ICON_OK : ICON_KO)); pill.appendChild(document.createTextNode(ok ? "Autorisée" : "Refusée"));
+    const dec = el("td"); const d = DEC[r.decision] || DEC.denied;
+    if (r.decision === "tor") markTor(true);
+    const pill = el("span", "pill " + d.cls);
+    pill.appendChild(svg(d.icon)); pill.appendChild(document.createTextNode(d.label));
     dec.appendChild(pill); tr.appendChild(dec);
     const pt = el("td"); pt.appendChild(el("span", "tag" + (r.profile ? "" : " none"), r.profile || "aucun")); tr.appendChild(pt);
     tr.appendChild(el("td", "mono", r.client));
@@ -189,6 +198,9 @@ document.addEventListener("DOMContentLoaded", () => {
     $("#k-total").textContent = nf.format(s.total);
     $("#k-ok").textContent = nf.format(s.allowed);
     $("#k-ko").textContent = nf.format(s.denied);
+    markTor(s.tor > 0);
+    $("#k-tor").textContent = nf.format(s.tor);
+    $("#k-tor-pct").textContent = s.total ? `${(100 * s.tor / s.total).toLocaleString("fr-FR", { maximumFractionDigits: 1 })} % du trafic` : "";
     $("#k-ko-pct").textContent = s.total ? `${(100 * s.denied / s.total).toLocaleString("fr-FR", { maximumFractionDigits: 1 })} % du trafic` : "";
     $("#k-hosts").textContent = nf.format(s.hosts);
     renderChart(s);
@@ -201,7 +213,8 @@ document.addEventListener("DOMContentLoaded", () => {
     for (const t of list) {
       const li = el("li");
       const h = el("span", "h", t.host); h.title = t.host;
-      const sub = el("small", null, `${t.profiles || "aucun profil"} · ${ago(t.last)}`); h.appendChild(sub);
+      const via = t.tor ? (t.tor === t.n ? " · via Tor" : ` · ${nf.format(t.tor)} via Tor`) : "";
+      const sub = el("small", null, `${t.profiles || "aucun profil"}${via} · ${ago(t.last)}`); h.appendChild(sub);
       li.appendChild(h);
       li.appendChild(el("span", "n", nf.format(t.n)));
       const b = el("button", "copy"); b.type = "button"; b.title = "Copier la ligne de whitelist"; b.appendChild(svg(ICON_COPY));
@@ -232,7 +245,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const W = box.clientWidth - 32, H = box.clientHeight - 16;
     const padL = 36, padB = 20, padT = 6;
     const data = s.timeline, n = data.length;
-    const max = niceMax(Math.max(1, ...data.map((d) => d.allowed + d.denied)));
+    const max = niceMax(Math.max(1, ...data.map((d) => d.allowed + d.tor + d.denied)));
     const iw = W - padL, ih = H - padB - padT;
     const step = iw / n, bw = Math.max(2, step - Math.min(6, step * 0.3));
     const y = (v) => padT + ih - (v / max) * ih;
@@ -254,7 +267,7 @@ document.addEventListener("DOMContentLoaded", () => {
       const g = sv("g", {});
       // Segment refusé en bas (ancré sur l'axe), autorisé au-dessus, séparés par 2 px.
       let base = y(0);
-      const segs = [["b-ko", d.denied], ["b-ok", d.allowed]].filter(([, v]) => v > 0);
+      const segs = [["b-ko", d.denied], ["b-tor", d.tor], ["b-ok", d.allowed]].filter(([, v]) => v > 0);
       segs.forEach(([cls, v], k) => {
         const h = Math.max(1.5, y(0) - y(v)) - (k > 0 ? 2 : 0);
         const top = base - h - (k > 0 ? 2 : 0);
@@ -270,7 +283,10 @@ document.addEventListener("DOMContentLoaded", () => {
         tip.replaceChildren();
         const end = d.t + s.bucket_seconds;
         tip.appendChild(el("div", "t-h", `${lab(d.t)} → ${lab(end)}`));
-        for (const [lbl, cls, v] of [["Autorisées", "ok", d.allowed], ["Refusées", "ko", d.denied]]) {
+        const rows = [["Autorisées", "ok", d.allowed]];
+        if (torSeen) rows.push(["Via Tor", "tor", d.tor]);
+        rows.push(["Refusées", "ko", d.denied]);
+        for (const [lbl, cls, v] of rows) {
           const row = el("div", "t-r"); const l = el("span"); l.appendChild(el("i", "sw " + cls)); l.appendChild(document.createTextNode(lbl));
           row.appendChild(l); row.appendChild(el("b", null, nf.format(v))); tip.appendChild(row);
         }
@@ -301,8 +317,10 @@ document.addEventListener("DOMContentLoaded", () => {
     const box = $("#profiles"); box.replaceChildren();
     for (const p of profiles) {
       const d = el("details"); const s = el("summary");
-      s.appendChild(el("span", "p-name", p.name));
-      s.appendChild(el("span", "p-stats", `${nf.format(p.requests_24h)} req · ${nf.format(p.denied_24h)} refus`));
+      const nm = el("span", "p-name", p.name + " ");
+      if (p.fallback === "tor") { nm.appendChild(el("span", "tag tor", "hors whitelist → Tor")); markTor(true); }
+      s.appendChild(nm);
+      s.appendChild(el("span", "p-stats", `${nf.format(p.requests_24h)} req · ${p.fallback === "tor" ? nf.format(p.tor_24h) + " Tor · " : ""}${nf.format(p.denied_24h)} refus`));
       s.appendChild(el("span", "p-nets", p.networks.length ? p.networks.join(", ") : "tous les clients (mode legacy)"));
       d.appendChild(s);
       const body = el("div", "p-body");

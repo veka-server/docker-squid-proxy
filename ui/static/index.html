@@ -37,7 +37,7 @@
       <button data-v="24h">24 h</button><button data-v="7d">7 j</button><button data-v="30d">30 j</button>
     </div>
     <div class="seg" id="decision" role="group" aria-label="Décision">
-      <button data-v="">Toutes</button><button data-v="allowed">Autorisées</button><button data-v="denied">Refusées</button>
+      <button data-v="">Toutes</button><button data-v="allowed">Autorisées</button><button data-v="tor" class="tor-only">Via Tor</button><button data-v="denied">Refusées</button>
     </div>
     <label class="select">
       <span class="sr">Profil</span>
@@ -52,6 +52,7 @@
   <section class="kpis">
     <div class="kpi"><span class="k-lbl">Requêtes</span><span class="k-val" id="k-total">–</span></div>
     <div class="kpi"><span class="k-lbl"><i class="sw ok"></i>Autorisées</span><span class="k-val" id="k-ok">–</span></div>
+    <div class="kpi tor-only"><span class="k-lbl"><i class="sw tor"></i>Via Tor</span><span class="k-val" id="k-tor">–</span><span class="k-sub" id="k-tor-pct"></span></div>
     <div class="kpi"><span class="k-lbl"><i class="sw ko"></i>Refusées</span><span class="k-val" id="k-ko">–</span><span class="k-sub" id="k-ko-pct"></span></div>
     <div class="kpi"><span class="k-lbl">Hôtes distincts</span><span class="k-val" id="k-hosts">–</span></div>
   </section>
@@ -59,7 +60,7 @@
   <section class="card chart-card">
     <div class="card-head">
       <h2>Activité</h2>
-      <div class="legend"><span><i class="sw ok"></i>Autorisées</span><span><i class="sw ko"></i>Refusées</span></div>
+      <div class="legend"><span><i class="sw ok"></i>Autorisées</span><span class="tor-only"><i class="sw tor"></i>Via Tor</span><span><i class="sw ko"></i>Refusées</span></div>
     </div>
     <div class="chart" id="chart"><div class="tip" id="tip" hidden></div></div>
   </section>
@@ -85,7 +86,7 @@
 
     <aside class="side">
       <section class="card">
-        <div class="card-head"><h2>Domaines refusés</h2><span class="muted">sur la période</span></div>
+        <div class="card-head"><h2 id="top-title">Domaines refusés</h2><span class="muted">sur la période</span></div>
         <ol class="toplist" id="top-denied"></ol>
         <p class="hint">Le bouton copie la ligne à ajouter dans <code>whitelist.txt</code>.</p>
       </section>

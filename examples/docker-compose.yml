@@ -17,6 +17,7 @@ services:
     environment:
       UI_PASSWORD: change-moi       # recommandé
       HISTORY_DAYS: 30
+      TOR_SOCKS: tor:9050           # pour les profils FALLBACK=tor
     volumes:
       # Montez le DOSSIER (pas des fichiers seuls) : les modifications sont
       # alors vues immédiatement et appliquées à chaud.
@@ -28,6 +29,8 @@ services:
         aliases: [squid-profile-dsh]        # -> profiles/dsh/
       ai-ollama:
         aliases: [squid-profile-ollama]     # -> profiles/ollama/
+      no-internet-suwayomi:
+        aliases: [squid-profile-suwayomi]   # -> profiles/suwayomi/ (hors whitelist -> Tor)
 
   dsh:
     image: mon/service-dsh
@@ -45,11 +48,29 @@ services:
     networks:
       - ai-ollama
 
+  suwayomi:
+    image: ghcr.io/suwayomi/suwayomi-server:stable
+    environment:
+      # Java : proxy HTTP(S) via les propriétés système
+      JAVA_TOOL_OPTIONS: >-
+        -Dhttp.proxyHost=squid-proxy -Dhttp.proxyPort=3128
+        -Dhttps.proxyHost=squid-proxy -Dhttps.proxyPort=3128
+    networks:
+      - no-internet-suwayomi
+
+  # Votre conteneur Tor (SocksPort 0.0.0.0:9050), joignable par le proxy
+  # via le réseau "internet".
+  # tor:
+  #   image: ...
+  #   networks: [internet]
+
 networks:
   internet: {}
   ai-dsh:
     internal: true
   ai-ollama:
+    internal: true
+  no-internet-suwayomi:
     internal: true
 
 volumes:

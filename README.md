@@ -15,6 +15,8 @@ docker pull ghcr.io/veka-server/docker-squid-proxy:latest
 - **Profils** : un seul conteneur, une whitelist par réseau docker client.
 - **Interface web** (port 8080) : requêtes en direct, autorisées/refusées, filtres, top des domaines refusés, thème clair/sombre. Historique SQLite.
 - **Rechargement à chaud** : toute modification d'une whitelist est validée (`squid -k parse`) puis appliquée sans redémarrage. Une conf invalide est rejetée et l'ancienne reste active.
+- **Repli vers Tor (optionnel, par profil)** : au lieu d'être refusées, les requêtes hors whitelist passent par un proxy SOCKS Tor ; la whitelist sort en direct.
+- **Pas de fuite DNS** : squid ne résout que via un filtre DNS interne qui ne laisse passer que les noms en whitelist.
 - **Pas de rebond entre réseaux** : les réseaux docker sur lesquels le proxy est branché (détectés automatiquement), localhost et 169.254.0.0/16 sont toujours refusés comme destination, même s'ils figurent dans une whitelist. Les IP et noms du LAN restent joignables s'ils sont en whitelist.
 - **Durcissement** : pas de résolution DNS des domaines refusés (pas de fuite DNS), IP littérales refusées sauf whitelist explicite, en-têtes `X-Forwarded-For` supprimés, aucun cache. Aucun filtrage par port : une entrée autorisée l'est sur tous les ports (ex. ComfyUI sur 8188).
 - Dépendances : `squid`, `su-exec`, `python3` (bibliothèque standard uniquement, aucun paquet pip). Interface en HTML/CSS/JS vanilla.
@@ -73,6 +75,34 @@ Exemple complet : [`examples/docker-compose.yml`](examples/docker-compose.yml). 
 
 Si vos services sont dans d'autres fichiers compose, déclarez les réseaux dans la stack du proxy et utilisez-les ailleurs avec `external: true` (en reprenant le nom complet du réseau, préfixé par le nom du projet).
 
+### Repli vers Tor
+
+Par défaut, une requête hors whitelist est refusée. Pour qu'un profil envoie ces requêtes vers Tor :
+
+```
+profiles/suwayomi/profile.conf
+FALLBACK=tor
+```
+
+et indiquez le proxy SOCKS de Tor au conteneur du proxy :
+
+```yaml
+    environment:
+      TOR_SOCKS: tor:9050
+```
+
+Le conteneur Tor doit être joignable par le proxy (par exemple sur son réseau de sortie) et accepter les connexions SOCKS de celui-ci.
+
+- **En whitelist** : sortie directe, comme avant.
+- **Hors whitelist** : sortie par Tor. Le nom est transmis à Tor, qui le résout (équivalent `socks5h`). Aucune requête DNS locale n'est émise et aucun DNSPort Tor n'est nécessaire.
+- **Toujours refusé, même en mode Tor** : les réseaux docker du proxy, localhost et link-local.
+- Si Tor est injoignable, la requête échoue (502). Elle ne repart **jamais** en direct.
+- En mode simple (whitelist unique), utilisez la variable `FALLBACK=tor`.
+
+Dans l'interface, ces requêtes apparaissent « Via Tor », et la liste « Hors whitelist » montre ce qui pourrait être ajouté à la whitelist.
+
+Techniquement, squid ne parle pas SOCKS : un petit pont local (`127.0.0.1:3129`, Python sans dépendance) traduit HTTP/CONNECT en SOCKS5.
+
 ### Appels entre conteneurs et `NO_PROXY`
 
 Les appels directs entre conteneurs d'un même réseau ne passent pas par le proxy et fonctionnent normalement. En revanche, avec `HTTP_PROXY`/`HTTPS_PROXY`, beaucoup de clients HTTP envoient **tous** leurs appels au proxy, y compris ceux destinés aux autres conteneurs. Or le proxy refuse toujours une destination située sur ses propres réseaux docker. Excluez donc ces noms :
@@ -106,6 +136,9 @@ Chaque requête est aussi écrite sur la sortie standard (`docker logs`).
 | `DENY_NETWORKS` | vide | Réseaux supplémentaires toujours interdits (ex. `172.16.0.0/12` pour couvrir tous les réseaux docker, y compris ceux où le proxy n'est pas branché) |
 | `BLOCK_PRIVATE_DESTINATIONS` | `0` | `1` : un **domaine** autorisé qui résout vers une IP privée est refusé (protection anti DNS-rebinding). Les IP de `whitelist-ips.txt` restent joignables |
 | `RELOAD_INTERVAL` | `10` | Fréquence (s) de vérification des fichiers, des réseaux et des alias |
+| `TOR_SOCKS` | vide | Proxy SOCKS5 de Tor (`hôte:port`) pour les profils `FALLBACK=tor` |
+| `FALLBACK` | `deny` | Mode simple uniquement : `tor` envoie le hors-whitelist vers Tor |
+| `DNS_GUARD` | `1` | Filtre DNS interne (seuls les noms en whitelist sont résolus). `0` pour le désactiver |
 | `PROFILE_ALIAS_PREFIX` | `squid-profile-` | Préfixe des alias réseau qui désignent les profils |
 
 Directives Squid supplémentaires : déposez des fichiers `*.conf` dans `/etc/squid/conf.d/`.

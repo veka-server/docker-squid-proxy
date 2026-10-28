@@ -25,6 +25,12 @@
 # DENY_NETWORKS. Un client ne peut donc pas rebondir vers un autre réseau docker
 # via le proxy, mais peut joindre une IP du LAN explicitement autorisée.
 #
+# Requêtes hors whitelist : refusées par défaut. Avec FALLBACK=tor (fichier
+# profiles/<nom>/profile.conf, ou variable FALLBACK en mode legacy), elles sont
+# envoyées vers le proxy SOCKS de Tor (TOR_SOCKS=hôte:port) via un pont local ;
+# la whitelist, elle, sort en direct. Les noms sont résolus par Tor (pas de DNS
+# local pour le trafic Tor).
+#
 # Les fichiers (et les réseaux du conteneur) sont surveillés : toute modification
 # régénère la conf, la valide (squid -k parse) puis recharge squid à chaud.
 set -eu
@@ -46,6 +52,12 @@ UI_APP="${UI_APP:-/app/ui.py}"
 EXTRA_CONF_DIR="${EXTRA_CONF_DIR:-/etc/squid/conf.d}"
 RUN_DIR="${RUN_DIR:-/run/squid-proxy}"
 PROFILE_ALIAS_PREFIX="${PROFILE_ALIAS_PREFIX:-squid-profile-}"
+LEGACY_FALLBACK="${FALLBACK:-deny}"
+TOR_SOCKS="${TOR_SOCKS:-}"
+TOR_BRIDGE_PORT="${TOR_BRIDGE_PORT:-3129}"
+BRIDGE_APP="${BRIDGE_APP:-/app/socks_bridge.py}"
+DNS_GUARD="${DNS_GUARD:-1}"
+DNS_GUARD_APP="${DNS_GUARD_APP:-/app/dns_guard.py}"
 
 log() { echo "[entrypoint] $*" >&2; }
 
@@ -96,6 +108,18 @@ profile_state() {
             fi
         fi
     done
+}
+
+# Mode de repli d'un profil (deny|tor), lu dans profiles/<nom>/profile.conf.
+profile_fallback() {
+    if [ "$1" = "-" ]; then v="$LEGACY_FALLBACK"
+    else v=$(sed -n 's/^[[:space:]]*FALLBACK[[:space:]]*=[[:space:]]*//p' "$PROFILES_DIR/$1/profile.conf" 2>/dev/null | tr -d ' \t"'"'"'\r' | tail -n 1)
+    fi
+    case "$v" in
+        tor) echo tor ;;
+        ""|deny) echo deny ;;
+        *) log "FALLBACK inconnu ($v) pour ${1#-}, refus appliqué"; echo deny ;;
+    esac
 }
 
 # Sous-réseaux de toutes les interfaces du conteneur (hors loopback).
@@ -158,6 +182,15 @@ EOF
         echo "# Proxy de filtrage : aucun cache (inutile pour du HTTPS/CONNECT)."
         echo "cache deny all"
         echo "cache_mem 0 MB"
+        echo "# Pas de pinger ICMP : il résout chaque site demandé (fuite DNS, y compris"
+        echo "# pour le trafic envoyé à Tor) et ne sert qu'au choix de proxy parent."
+        echo "pinger_enable off"
+        echo "query_icmp off"
+        if [ "$DNS_GUARD" = "1" ]; then
+            echo "# Squid ne résout que via le filtre DNS local : seuls les noms en"
+            echo "# whitelist sont transmis au résolveur, les autres reçoivent REFUSED."
+            echo "dns_nameservers 127.0.0.1"
+        fi
         echo
         echo "# Ne pas divulguer les IP internes ni la version de squid."
         echo "visible_hostname squid-proxy"
@@ -168,7 +201,7 @@ EOF
         echo "cache_log /dev/null"
         echo "logfile_rotate 0"
         if [ "$UI_ENABLED" = "1" ]; then
-            echo "logformat ui %ts.%03tu %>a %la %{profile}note %Ss %>Hs %rm %>st %<st %tr %<a %#{User-Agent}>h %#ru"
+            echo "logformat ui %ts.%03tu %>a %la %{profile}note %Ss %Sh %>Hs %rm %>st %<st %tr %<a %#{User-Agent}>h %#ru"
             echo "access_log udp://127.0.0.1:$LOG_UDP_PORT ui"
         else
             echo "access_log none"
@@ -189,7 +222,10 @@ EOF
         # Déclare les ACL d'un profil et émet ses règles dans deux fichiers
         # temporaires (règles IP / règles domaines) pour respecter l'ordre global.
         rules_ip="$acl_dir/.rules_ip"; rules_dom="$acl_dir/.rules_dom"
-        : > "$rules_ip"; : > "$rules_dom"
+        rules_tor_ip="$acl_dir/.rules_tor_ip"; rules_tor_dom="$acl_dir/.rules_tor_dom"
+        rules_route="$acl_dir/.rules_route"
+        : > "$rules_ip"; : > "$rules_dom"; : > "$rules_tor_ip"; : > "$rules_tor_dom"; : > "$rules_route"
+        tor_used=0
         if [ "$BLOCK_PRIVATE" = "1" ]; then priv=" !to_private"; else priv=""; fi
 
         if [ "$profile_mode" = 1 ]; then
@@ -215,40 +251,89 @@ EOF
             fi
             if [ -z "$who" ]; then wl="$LEGACY_WL"; wl_ips="$LEGACY_WL_IPS"
             else wl="$PROFILES_DIR/$p/whitelist.txt"; wl_ips="$PROFILES_DIR/$p/whitelist-ips.txt"; fi
+            not_ip=""; not_dom=""
             if has_entries "$wl_ips"; then
                 echo "acl wl_ip_$p dst \"$wl_ips\""
                 echo "http_access allow ${who}ip_host wl_ip_$p" >> "$rules_ip"
+                not_ip=" !wl_ip_$p"
             fi
             if has_entries "$wl"; then
                 echo "acl wl_dom_$p dstdomain -n \"$wl\""
                 echo "http_access allow ${who}wl_dom_$p !deny_nets$priv" >> "$rules_dom"
+                not_dom=" !wl_dom_$p"
+            fi
+            if [ "$profile_mode" = 0 ]; then fb=$(profile_fallback -); else fb=$(profile_fallback "$p"); fi
+            if [ "$fb" = tor ] && [ -z "$TOR_SOCKS" ]; then
+                log "ERREUR : FALLBACK=tor pour ${p} mais TOR_SOCKS n'est pas défini — hors whitelist refusé"
+                fb=deny
+            fi
+            if [ "$fb" = tor ]; then
+                tor_used=1
+                # Hors whitelist -> Tor. Les ACL utilisées ici sont toutes « rapides »
+                # (aucune résolution DNS locale des domaines envoyés à Tor).
+                echo "http_access allow ${who}ip_host" >> "$rules_tor_ip"
+                if [ -n "$not_dom" ]; then
+                    # domaine en whitelist mais refusé à l'étape 4 (réseau interdit) : reste refusé
+                    echo "http_access deny ${who}wl_dom_$p" >> "$rules_tor_dom"
+                fi
+                echo "http_access allow ${who%?}" >> "$rules_tor_dom"
+                echo "${who}ip_host$not_ip" >> "$rules_route"
+                echo "${who}!ip_host$not_dom" >> "$rules_route"
             fi
         done
+        # "allow " seul est invalide en mode legacy (who vide) : on le remplace par all.
+        sed -i 's/^http_access allow $/http_access allow all/' "$rules_tor_dom"
         echo
         echo "# 1. IP littérales vers les réseaux interdits (docker, localhost…) : refus sans DNS"
         echo "http_access deny ip_host deny_nets"
         echo "# 2. IP littérales en whitelist"
         cat "$rules_ip"
+        if [ -s "$rules_tor_ip" ]; then
+            echo "# 2b. Profils FALLBACK=tor : autres IP littérales -> Tor"
+            cat "$rules_tor_ip"
+        fi
         echo "# 3. Toute autre IP littérale est refusée"
         echo "http_access deny ip_host"
         echo "# 4. Domaines en whitelist. La résolution DNS"
         echo "#    n'a lieu qu'APRÈS le match du domaine : pas de fuite DNS vers les"
         echo "#    domaines refusés. Un domaine qui résout vers un réseau interdit est refusé."
         cat "$rules_dom"
+        if [ -s "$rules_tor_dom" ]; then
+            echo "# 5. Profils FALLBACK=tor : tout le reste -> Tor"
+            cat "$rules_tor_dom"
+        fi
         echo "http_access deny all"
-        rm -f "$rules_ip" "$rules_dom"
+        if [ "$tor_used" = 1 ]; then
+            echo
+            echo "# ===== Routage Tor (pont local HTTP->SOCKS5 vers $TOR_SOCKS) ====="
+            echo "cache_peer 127.0.0.1 parent $TOR_BRIDGE_PORT 0 no-query no-digest no-netdb-exchange name=tor"
+            # Hors whitelist : uniquement via Tor, jamais de repli en direct.
+            sed 's/^/never_direct allow /' "$rules_route"
+            sed 's/^/cache_peer_access tor allow /' "$rules_route"
+            echo "cache_peer_access tor deny all"
+        fi
+        rm -f "$rules_ip" "$rules_dom" "$rules_tor_ip" "$rules_tor_dom" "$rules_route"
     } > "$out"
 
+    # Noms autorisés pour le filtre DNS : union des whitelists actives.
+    {
+        if [ "$profile_mode" = 1 ]; then
+            for p in $profiles; do cat "$PROFILES_DIR/$p/whitelist.txt" 2>/dev/null; echo; done
+        else
+            cat "$LEGACY_WL" 2>/dev/null
+        fi
+    } > "$acl_dir/dns-allow.txt"
+
     # Correspondance profil -> fichiers pour l'interface web.
-    # nom <TAB> whitelist <TAB> whitelist-ips <TAB> networks
+    # nom <TAB> whitelist <TAB> whitelist-ips <TAB> networks <TAB> repli
     {
         if [ "$profile_mode" = 1 ]; then
             for p in $profiles; do
                 d="$PROFILES_DIR/$p"
-                printf '%s\t%s\t%s\t%s\n' "$p" "$d/whitelist.txt" "$d/whitelist-ips.txt" "$acl_dir/$p.networks"
+                printf '%s\t%s\t%s\t%s\t%s\n' "$p" "$d/whitelist.txt" "$d/whitelist-ips.txt" "$acl_dir/$p.networks" "$(profile_fallback "$p" 2>/dev/null)"
             done
         else
-            printf '%s\t%s\t%s\t%s\n' default "$LEGACY_WL" "$LEGACY_WL_IPS" -
+            printf '%s\t%s\t%s\t%s\t%s\n' default "$LEGACY_WL" "$LEGACY_WL_IPS" - "$(profile_fallback - 2>/dev/null)"
         fi
     } > "$acl_dir/profiles.map"
 }
@@ -279,6 +364,7 @@ build() {
     if squid -k parse -f "$SQUID_CONF.new" >"$RUN_DIR/parse.log" 2>&1; then
         mv "$SQUID_CONF.new" "$SQUID_CONF"
         cp "$gen/profiles.map" "$RUN_DIR/profiles.map.tmp" && mv "$RUN_DIR/profiles.map.tmp" "$RUN_DIR/profiles.map"
+        cp "$gen/dns-allow.txt" "$RUN_DIR/dns-allow.txt.tmp" && chmod 644 "$RUN_DIR/dns-allow.txt.tmp" && mv "$RUN_DIR/dns-allow.txt.tmp" "$RUN_DIR/dns-allow.txt"
         [ -z "${UI_PROFILES_MAP:-}" ] || [ "$UI_PROFILES_MAP" = "$RUN_DIR/profiles.map" ] || cp "$RUN_DIR/profiles.map" "$UI_PROFILES_MAP"
         for d in "$RUN_DIR"/acl-*; do
             [ "$d" = "$gen" ] || rm -rf "$d"
@@ -310,6 +396,23 @@ watch_loop() {
     done
 }
 
+dns_guard_loop() {
+    while :; do
+        # démarre en root pour le port 53, puis abandonne ses privilèges
+        DNS_ALLOW_FILE="$RUN_DIR/dns-allow.txt" DNS_GUARD_USER="$UI_USER" python3 "$DNS_GUARD_APP" || true
+        log "filtre DNS arrêté, redémarrage dans 1 s"
+        sleep 1
+    done
+}
+
+bridge_loop() {
+    while :; do
+        su-exec "$UI_USER" python3 "$BRIDGE_APP" || true
+        log "pont Tor arrêté, redémarrage dans 2 s"
+        sleep 2
+    done
+}
+
 ui_loop() {
     while :; do
         su-exec "$UI_USER" python3 "$UI_APP" || true
@@ -336,11 +439,32 @@ if ! build; then
 fi
 describe_mode
 
+if [ "$DNS_GUARD" = "1" ]; then
+    dns_guard_loop &
+fi
+
 if [ "$UI_ENABLED" = "1" ]; then
+    # Le dossier de la base est souvent un montage (bind mount) créé par docker
+    # pour root : on le rend inscriptible par l'utilisateur de l'interface.
+    db_path="${DB_PATH:-/data/history.db}"
+    db_dir=$(dirname "$db_path")
+    mkdir -p "$db_dir"
+    for f in "$db_dir" "$db_path" "$db_path-wal" "$db_path-shm"; do
+        [ -e "$f" ] || continue
+        chown "$UI_USER" "$f" 2>/dev/null || log "ATTENTION : impossible de donner $f à $UI_USER (montage NFS/root_squash ?) — l'historique risque de ne pas fonctionner"
+    done
     export LOG_UDP_PORT
     ui_loop &
 fi
+if [ -n "$TOR_SOCKS" ]; then
+    export TOR_SOCKS TOR_BRIDGE_PORT
+    bridge_loop &
+fi
 watch_loop &
+
+# Compatibilité : les images dérivées qui ajoutent des tâches dans
+# /etc/crontabs/root continuent de fonctionner.
+if command -v crond >/dev/null 2>&1; then crond -l 8 || true; fi
 
 rm -f "$PID_FILE"
 exec su-exec "$SQUID_USER" squid -N -d 1 -f "$SQUID_CONF"

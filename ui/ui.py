@@ -64,7 +64,7 @@ CREATE TABLE IF NOT EXISTS requests (
     host        TEXT    NOT NULL,
     port        INTEGER,
     url         TEXT    NOT NULL,
-    decision    TEXT    NOT NULL,      -- 'allowed' | 'denied'
+    decision    TEXT    NOT NULL,      -- 'allowed' | 'tor' | 'denied'
     squid_status TEXT   NOT NULL,      -- ex. TCP_TUNNEL, TCP_DENIED
     http_status INTEGER,
     bytes_in    INTEGER,
@@ -126,14 +126,16 @@ def load_profiles():
         with open(PROFILES_MAP, encoding="utf-8") as f:
             for line in f:
                 parts = line.rstrip("\n").split("\t")
-                if len(parts) != 4:
+                if len(parts) < 4:
                     continue
-                name, wl, wl_ips, nets = parts
+                name, wl, wl_ips, nets = parts[:4]
+                fallback = parts[4] if len(parts) > 4 else "deny"
                 profiles.append({
                     "name": name,
                     "networks": read_list(nets) if nets != "-" else [],
                     "domains": read_list(wl),
                     "ips": read_list(wl_ips),
+                    "fallback": fallback,
                 })
     except OSError:
         pass
@@ -163,12 +165,14 @@ def to_int(v):
 
 
 def parse_line(line):
-    # logformat ui : ts client local profile squid_status http_status method
+    # logformat ui : ts client local profile squid_status hierarchy http_status method
     #                req_bytes resp_bytes duration server_ip ua(urlencoded) url(urlencoded)
     f = line.strip().split(" ")
-    if len(f) != 13:
+    if len(f) == 13:  # ancien format (sans %Sh)
+        f.insert(5, "-")
+    if len(f) != 14:
         return None
-    ts, client, _local, profile, sstatus, hstatus, method, b_in, b_out, dur, server, ua, url = f
+    ts, client, _local, profile, sstatus, hier, hstatus, method, b_in, b_out, dur, server, ua, url = f
     url = unquote(url)
     if url.startswith("error:") or method == "-":
         return None  # connexions fermées avant toute requête (health checks, scans)
@@ -186,9 +190,9 @@ def parse_line(line):
     ua = unquote(ua)
     return (
         float(ts), profile if profile != "-" else "", client, method, host, port, url,
-        "denied" if "DENIED" in sstatus else "allowed",
+        "denied" if "DENIED" in sstatus else ("tor" if "PARENT" in hier else "allowed"),
         sstatus.split("/")[0], to_int(hstatus), to_int(b_in), to_int(b_out), to_int(dur),
-        server if server != "-" else "", ua if ua != "-" else "",
+        "Tor" if "PARENT" in hier else (server if server != "-" else ""), ua if ua != "-" else "",
     )
 
 
@@ -288,7 +292,7 @@ def build_filters(qs, with_decision=True):
         args.append(profile if profile != "(aucun)" else "")
     if with_decision:
         decision = qs.get("decision", [""])[0]
-        if decision in ("allowed", "denied"):
+        if decision in ("allowed", "tor", "denied"):
             where.append("decision = ?")
             args.append(decision)
     q = qs.get("q", [""])[0].strip()
@@ -320,26 +324,28 @@ def api_stats(conn, qs):
     where, args, rng = build_filters(qs, with_decision=False)
     w = " AND ".join(where)
     tot = conn.execute(
-        f"SELECT COUNT(*) n, SUM(decision='allowed') ok, SUM(decision='denied') ko,"
+        f"SELECT COUNT(*) n, SUM(decision='allowed') ok, SUM(decision='denied') ko, SUM(decision='tor') tor,"
         f" COUNT(DISTINCT host) hosts FROM requests WHERE {w}", args).fetchone()
     nb = 48
     now = time.time()
     size = rng / nb
     start = now - rng
-    buckets = [{"t": start + i * size, "allowed": 0, "denied": 0} for i in range(nb)]
+    buckets = [{"t": start + i * size, "allowed": 0, "tor": 0, "denied": 0} for i in range(nb)]
     for r in conn.execute(
             f"SELECT CAST((ts - ?) / ? AS INTEGER) b, decision, COUNT(*) n FROM requests"
             f" WHERE {w} GROUP BY b, decision", [start, size] + args):
         if 0 <= r["b"] < nb:
             buckets[r["b"]][r["decision"]] += r["n"]
+    # Hors whitelist = refusées + envoyées vers Tor : candidates à la whitelist.
     top_denied = [dict(r) for r in conn.execute(
-        f"SELECT host, COUNT(*) n, MAX(ts) last, GROUP_CONCAT(DISTINCT NULLIF(profile, '')) profiles"
-        f" FROM requests WHERE {w} AND decision='denied' GROUP BY host ORDER BY n DESC LIMIT 15", args)]
+        f"SELECT host, COUNT(*) n, MAX(ts) last, GROUP_CONCAT(DISTINCT NULLIF(profile, '')) profiles,"
+        f" SUM(decision='tor') tor FROM requests WHERE {w} AND decision IN ('denied', 'tor')"
+        f" GROUP BY host ORDER BY n DESC LIMIT 15", args)]
     top_allowed = [dict(r) for r in conn.execute(
         f"SELECT host, COUNT(*) n, MAX(ts) last FROM requests WHERE {w} AND decision='allowed'"
         f" GROUP BY host ORDER BY n DESC LIMIT 15", args)]
     return {
-        "total": tot["n"] or 0, "allowed": tot["ok"] or 0, "denied": tot["ko"] or 0,
+        "total": tot["n"] or 0, "allowed": tot["ok"] or 0, "denied": tot["ko"] or 0, "tor": tot["tor"] or 0,
         "hosts": tot["hosts"] or 0, "bucket_seconds": size, "timeline": buckets,
         "top_denied": top_denied, "top_allowed": top_allowed,
     }
@@ -349,12 +355,13 @@ def api_profiles(conn):
     profiles = load_profiles()
     since = time.time() - 86400
     counts = {r["profile"]: dict(r) for r in conn.execute(
-        "SELECT profile, COUNT(*) n, SUM(decision='denied') denied FROM requests"
+        "SELECT profile, COUNT(*) n, SUM(decision='denied') denied, SUM(decision='tor') tor FROM requests"
         " WHERE ts >= ? GROUP BY profile", (since,))}
     for p in profiles:
         c = counts.get(p["name"], {})
         p["requests_24h"] = c.get("n", 0)
         p["denied_24h"] = c.get("denied", 0) or 0
+        p["tor_24h"] = c.get("tor", 0) or 0
     return {"profiles": profiles, "unmatched_24h": counts.get("", {}).get("n", 0)}
 
 
