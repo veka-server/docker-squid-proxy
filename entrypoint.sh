@@ -203,7 +203,7 @@ EOF
         echo "logfile_rotate 0"
         if [ "$UI_ENABLED" = "1" ]; then
             echo "logformat ui %ts.%03tu %>a %la %{profile}note %Ss %Sh %>Hs %rm %>st %<st %tr %<a %#{User-Agent}>h %#ru"
-            echo "access_log udp://127.0.0.1:$LOG_UDP_PORT ui"
+            echo "access_log udp://127.0.0.1:$LOG_UDP_PORT logformat=ui buffer-size=0KB"
         else
             echo "access_log none"
         fi
@@ -218,9 +218,11 @@ EOF
         echo 'acl ip_host dstdom_regex -n ^[0-9.]+$ :'
         echo "acl deny_nets dst \"$acl_dir/deny-networks.txt\""
         echo "# Noms internes (sans point, ou suffixes réservés au réseau local) : jamais"
-        echo "# envoyés à Tor ni ailleurs s'ils ne sont pas en whitelist. + LOCAL_DOMAINS."
+        echo "# envoyés à Tor ni ailleurs s'ils ne sont pas en whitelist."
         echo 'acl local_names dstdom_regex -n -i ^[^.]+$ \.(local|lan|internal|intranet|localdomain|localhost|home|home\.arpa|corp|private|test|invalid)$'
         if [ -n "$LOCAL_DOMAINS" ]; then
+            echo "# Domaines mixtes (LOCAL_DOMAINS) : résolus localement ; IP privée -> refus,"
+            echo "# IP publique -> règles normales (whitelist directe, sinon Tor ou refus)."
             echo "acl local_names_extra dstdomain -n $(echo "$LOCAL_DOMAINS" | tr ',' ' ')"
         fi
         echo "acl to_private dst 10.0.0.0/8 100.64.0.0/10 172.16.0.0/12 192.168.0.0/16 fc00::/7"
@@ -307,7 +309,10 @@ EOF
         cat "$rules_dom"
         echo "# 5. Noms internes hors whitelist : refus immédiat (pas de fuite vers Tor)"
         echo "http_access deny local_names"
-        if [ -n "$LOCAL_DOMAINS" ]; then echo "http_access deny local_names_extra"; fi
+        if [ -n "$LOCAL_DOMAINS" ]; then
+            echo "http_access deny local_names_extra deny_nets"
+            echo "http_access deny local_names_extra to_private"
+        fi
         if [ -s "$rules_tor_dom" ]; then
             echo "# 6. Profils FALLBACK=tor : tout le reste -> Tor"
             cat "$rules_tor_dom"
@@ -332,6 +337,8 @@ EOF
         else
             cat "$LEGACY_WL" 2>/dev/null
         fi
+        # domaines mixtes : leur résolution locale est nécessaire pour les classer
+        for d in $(echo "$LOCAL_DOMAINS" | tr ',' ' '); do echo "$d"; done
     } > "$acl_dir/dns-allow.txt"
 
     # Correspondance profil -> fichiers pour l'interface web.
