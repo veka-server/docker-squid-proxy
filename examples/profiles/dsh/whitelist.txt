@@ -1,0 +1,3 @@
+# Domaines autorisés pour le profil dsh
+# ".domaine.tld" = le domaine et tous ses sous-domaines
+.openrouter.ai

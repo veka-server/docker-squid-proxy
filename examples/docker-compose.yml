@@ -1,0 +1,56 @@
+# Un seul proxy pour plusieurs services, chacun avec sa propre whitelist.
+#
+# Principe : chaque service "IA" est sur son propre réseau interne (sans accès
+# internet). Le proxy est branché sur tous ces réseaux + un réseau avec accès
+# internet. Sur chaque réseau, le proxy porte l'alias "squid-profile-<nom>" :
+# c'est ce qui relie le réseau au dossier profiles/<nom>/. Le sous-réseau est
+# détecté automatiquement, rien à fixer à la main.
+
+services:
+  squid-proxy:
+    image: ghcr.io/veka-server/docker-squid-proxy:latest
+    container_name: squid-proxy
+    restart: always
+    ports:
+      # Interface web uniquement. Ne publiez PAS le 3128.
+      - "8080:8080"
+    environment:
+      UI_PASSWORD: change-moi       # recommandé
+      HISTORY_DAYS: 30
+    volumes:
+      # Montez le DOSSIER (pas des fichiers seuls) : les modifications sont
+      # alors vues immédiatement et appliquées à chaud.
+      - ./profiles:/etc/squid/profiles:ro
+      - squid-data:/data
+    networks:
+      internet: {}
+      ai-dsh:
+        aliases: [squid-profile-dsh]        # -> profiles/dsh/
+      ai-ollama:
+        aliases: [squid-profile-ollama]     # -> profiles/ollama/
+
+  dsh:
+    image: mon/service-dsh
+    environment:
+      HTTP_PROXY: http://squid-proxy:3128
+      HTTPS_PROXY: http://squid-proxy:3128
+      NO_PROXY: localhost,127.0.0.1   # + noms des conteneurs appelés en direct
+    networks:
+      - ai-dsh
+
+  ollama:
+    image: ollama/ollama
+    environment:
+      HTTPS_PROXY: http://squid-proxy:3128
+    networks:
+      - ai-ollama
+
+networks:
+  internet: {}
+  ai-dsh:
+    internal: true
+  ai-ollama:
+    internal: true
+
+volumes:
+  squid-data:

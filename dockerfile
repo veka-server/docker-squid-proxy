@@ -1,39 +1,34 @@
 FROM alpine:latest
 
-# Installer Squid et nettoyer le cache
-RUN apk add --no-cache squid su-exec && \
-    rm -rf /var/cache/apk/*
+# squid + su-exec (drop de privilèges) + python3 (interface web, stdlib uniquement)
+RUN apk add --no-cache squid su-exec python3 && \
+    adduser -S -D -H -h /data -s /sbin/nologin squidui && \
+    mkdir -p /var/lib/squid /data /run/squid-proxy /etc/squid/profiles /etc/squid/conf.d && \
+    chown squid:squid /var/lib/squid && \
+    chown squidui /data
 
-# Copier le fichier de white liste de domaine
-COPY ./whitelist.txt /etc/squid/whitelist.txt
-COPY ./whitelist-ips.txt /etc/squid/whitelist-ips.txt
+# Whitelists par défaut (mode legacy, si aucun profil n'est monté)
+COPY whitelist.txt whitelist-ips.txt /etc/squid/
+COPY --chmod=755 entrypoint.sh /entrypoint.sh
+COPY ui/ /app/
 
-# Configurer Squid
-RUN echo "http_port 3128" > /etc/squid/squid.conf && \
-    echo "max_filedescriptors 1024" >> /etc/squid/squid.conf && \
-    echo "pid_filename /var/lib/squid/squid.pid" >> /etc/squid/squid.conf && \
-    echo "cache_dir ufs /var/cache/squid 8 16 256" >> /etc/squid/squid.conf && \
-    echo "cache_mem 8 MB" >> /etc/squid/squid.conf && \
-    echo "maximum_object_size 1 MB" >> /etc/squid/squid.conf && \
-    echo "minimum_object_size 0 KB" >> /etc/squid/squid.conf && \
-    echo "acl whitelist_domains dstdomain \"/etc/squid/whitelist.txt\"" >> /etc/squid/squid.conf && \
-    echo "acl whitelist_ips dst \"/etc/squid/whitelist-ips.txt\"" >> /etc/squid/squid.conf && \
-    echo "http_access allow whitelist_ips" >> /etc/squid/squid.conf && \
-    echo "http_access allow whitelist_domains" >> /etc/squid/squid.conf && \
-    echo "http_access deny all" >> /etc/squid/squid.conf && \
-    echo "access_log stdio:/var/log/squid/access.log squid" >> /etc/squid/squid.conf && \
-    echo "cache_log /var/log/squid/cache.log" >> /etc/squid/squid.conf
+ENV PROXY_PORT=3128 \
+    UI_ENABLED=1 \
+    UI_PORT=8080 \
+    UI_ACCESS=egress \
+    DB_PATH=/data/history.db \
+    HISTORY_DAYS=30 \
+    DENY_NETWORKS="" \
+    BLOCK_PRIVATE_DESTINATIONS=0 \
+    RELOAD_INTERVAL=10 \
+    PROFILE_ALIAS_PREFIX=squid-profile-
 
-# Préparer et initialiser le cache
-RUN mkdir -p /var/cache/squid /var/log/squid /var/lib/squid && \
-    chown -R squid:squid /var/cache/squid /var/log/squid /var/lib/squid 
-#    su -s /bin/sh squid -c "/usr/sbin/squid -Nz"
+EXPOSE 3128 8080
+VOLUME /data
 
-# Exposer le port du proxy
-EXPOSE 3128
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s \
+  CMD sh -c 'if [ "$UI_ENABLED" = 1 ]; then wget -q -O /dev/null "http://127.0.0.1:$UI_PORT/healthz"; else kill -0 "$(cat /var/lib/squid/squid.pid)"; fi'
 
-# Nettoie le pid file orphelin (résidu d'un arrêt sale), initialise le cache,
-# puis exec squid en foreground pour qu'il devienne PID 1 et reçoive
-# correctement les signaux (SIGTERM sur docker stop -> arrêt propre)
-USER root
-ENTRYPOINT ["/bin/sh", "-c", "crond -l 8 && rm -f /var/lib/squid/squid.pid && squid -Nz && exec su-exec squid squid -N -d 1"]
+# L'entrypoint génère squid.conf, lance l'interface web et le rechargement à chaud,
+# puis exec squid en foreground (PID 1, arrêt propre sur SIGTERM).
+ENTRYPOINT ["/entrypoint.sh"]

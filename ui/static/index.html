@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Squid Proxy — requêtes</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/app.css">
+<script src="/app.js"></script>
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <svg class="logo" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2 4 5v6c0 5 3.4 9.4 8 11 4.6-1.6 8-6 8-11V5l-8-3Z"/><path d="m8.5 12 2.5 2.5 4.5-5" class="tick"/></svg>
+    <div>
+      <h1>Squid Proxy</h1>
+      <p class="sub">Journal des requêtes sortantes</p>
+    </div>
+  </div>
+  <div class="top-actions">
+    <button id="live" class="chip live" type="button" aria-pressed="true" title="Mettre en pause / reprendre le direct">
+      <span class="dot"></span><span class="lbl">En direct</span>
+    </button>
+    <button id="theme" class="icon-btn" type="button" title="Thème">
+      <svg viewBox="0 0 24 24" class="i-sun" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+      <svg viewBox="0 0 24 24" class="i-moon" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/></svg>
+      <svg viewBox="0 0 24 24" class="i-auto" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 3v18a9 9 0 0 0 0-18Z" class="fill"/></svg>
+      <span class="sr" id="theme-label">Thème</span>
+    </button>
+  </div>
+</header>
+
+<main>
+  <section class="filters" aria-label="Filtres">
+    <div class="seg" id="range" role="group" aria-label="Période">
+      <button data-v="15m">15 min</button><button data-v="1h">1 h</button><button data-v="6h">6 h</button>
+      <button data-v="24h">24 h</button><button data-v="7d">7 j</button><button data-v="30d">30 j</button>
+    </div>
+    <div class="seg" id="decision" role="group" aria-label="Décision">
+      <button data-v="">Toutes</button><button data-v="allowed">Autorisées</button><button data-v="denied">Refusées</button>
+    </div>
+    <label class="select">
+      <span class="sr">Profil</span>
+      <select id="profile"><option value="">Tous les profils</option></select>
+    </label>
+    <label class="search">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+      <input id="q" type="search" placeholder="Filtrer hôte, URL, client…" autocomplete="off" spellcheck="false">
+    </label>
+  </section>
+
+  <section class="kpis">
+    <div class="kpi"><span class="k-lbl">Requêtes</span><span class="k-val" id="k-total">–</span></div>
+    <div class="kpi"><span class="k-lbl"><i class="sw ok"></i>Autorisées</span><span class="k-val" id="k-ok">–</span></div>
+    <div class="kpi"><span class="k-lbl"><i class="sw ko"></i>Refusées</span><span class="k-val" id="k-ko">–</span><span class="k-sub" id="k-ko-pct"></span></div>
+    <div class="kpi"><span class="k-lbl">Hôtes distincts</span><span class="k-val" id="k-hosts">–</span></div>
+  </section>
+
+  <section class="card chart-card">
+    <div class="card-head">
+      <h2>Activité</h2>
+      <div class="legend"><span><i class="sw ok"></i>Autorisées</span><span><i class="sw ko"></i>Refusées</span></div>
+    </div>
+    <div class="chart" id="chart"><div class="tip" id="tip" hidden></div></div>
+  </section>
+
+  <div class="grid">
+    <section class="card table-card">
+      <div class="card-head">
+        <h2>Requêtes</h2>
+        <span class="muted" id="count"></span>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr>
+            <th>Heure</th><th>Décision</th><th>Profil</th><th>Client</th><th>Méthode</th>
+            <th class="w-host">Hôte</th><th class="num">Code</th><th class="num">Taille</th><th class="num">Durée</th>
+          </tr></thead>
+          <tbody id="rows"></tbody>
+        </table>
+        <div class="empty" id="empty" hidden>Aucune requête pour ces filtres.</div>
+      </div>
+      <button class="more" id="more" type="button" hidden>Charger plus</button>
+    </section>
+
+    <aside class="side">
+      <section class="card">
+        <div class="card-head"><h2>Domaines refusés</h2><span class="muted">sur la période</span></div>
+        <ol class="toplist" id="top-denied"></ol>
+        <p class="hint">Le bouton copie la ligne à ajouter dans <code>whitelist.txt</code>.</p>
+      </section>
+      <section class="card">
+        <div class="card-head"><h2>Profils</h2><span class="muted">24 h</span></div>
+        <div id="profiles" class="profiles"></div>
+      </section>
+    </aside>
+  </div>
+</main>
+<div class="toast" id="toast" role="status" hidden></div>
+</body>
+</html>
