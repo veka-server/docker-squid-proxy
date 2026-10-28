@@ -57,6 +57,7 @@ TOR_SOCKS="${TOR_SOCKS:-}"
 TOR_BRIDGE_PORT="${TOR_BRIDGE_PORT:-3129}"
 BRIDGE_APP="${BRIDGE_APP:-/app/socks_bridge.py}"
 DNS_GUARD="${DNS_GUARD:-1}"
+LOCAL_DOMAINS="${LOCAL_DOMAINS:-}"
 DNS_GUARD_APP="${DNS_GUARD_APP:-/app/dns_guard.py}"
 
 log() { echo "[entrypoint] $*" >&2; }
@@ -216,6 +217,12 @@ EOF
         echo "# Hôte demandé sous forme d'IP littérale (v4 ou v6) : détection sans DNS."
         echo 'acl ip_host dstdom_regex -n ^[0-9.]+$ :'
         echo "acl deny_nets dst \"$acl_dir/deny-networks.txt\""
+        echo "# Noms internes (sans point, ou suffixes réservés au réseau local) : jamais"
+        echo "# envoyés à Tor ni ailleurs s'ils ne sont pas en whitelist. + LOCAL_DOMAINS."
+        echo 'acl local_names dstdom_regex -n -i ^[^.]+$ \.(local|lan|internal|intranet|localdomain|localhost|home|home\.arpa|corp|private|test|invalid)$'
+        if [ -n "$LOCAL_DOMAINS" ]; then
+            echo "acl local_names_extra dstdomain -n $(echo "$LOCAL_DOMAINS" | tr ',' ' ')"
+        fi
         echo "acl to_private dst 10.0.0.0/8 100.64.0.0/10 172.16.0.0/12 192.168.0.0/16 fc00::/7"
         echo
 
@@ -298,8 +305,11 @@ EOF
         echo "#    n'a lieu qu'APRÈS le match du domaine : pas de fuite DNS vers les"
         echo "#    domaines refusés. Un domaine qui résout vers un réseau interdit est refusé."
         cat "$rules_dom"
+        echo "# 5. Noms internes hors whitelist : refus immédiat (pas de fuite vers Tor)"
+        echo "http_access deny local_names"
+        if [ -n "$LOCAL_DOMAINS" ]; then echo "http_access deny local_names_extra"; fi
         if [ -s "$rules_tor_dom" ]; then
-            echo "# 5. Profils FALLBACK=tor : tout le reste -> Tor"
+            echo "# 6. Profils FALLBACK=tor : tout le reste -> Tor"
             cat "$rules_tor_dom"
         fi
         echo "http_access deny all"
