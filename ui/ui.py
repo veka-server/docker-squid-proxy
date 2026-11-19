@@ -130,12 +130,15 @@ def load_profiles():
                     continue
                 name, wl, wl_ips, nets = parts[:4]
                 fallback = parts[4] if len(parts) > 4 else "deny"
+                wl_tor = parts[5] if len(parts) > 5 else "-"
                 profiles.append({
                     "name": name,
                     "networks": read_list(nets) if nets != "-" else [],
                     "domains": read_list(wl),
                     "ips": read_list(wl_ips),
                     "fallback": fallback,
+                    "tor_restricted": wl_tor != "-",
+                    "tor_domains": read_list(wl_tor) if wl_tor != "-" else [],
                 })
     except OSError:
         pass

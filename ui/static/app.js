@@ -318,7 +318,7 @@ document.addEventListener("DOMContentLoaded", () => {
     for (const p of profiles) {
       const d = el("details"); const s = el("summary");
       const nm = el("span", "p-name", p.name + " ");
-      if (p.fallback === "tor") { nm.appendChild(el("span", "tag tor", "hors whitelist → Tor")); markTor(true); }
+      if (p.fallback === "tor") { nm.appendChild(el("span", "tag tor", p.tor_restricted ? "liste Tor → Tor, reste refusé" : "hors whitelist → Tor")); markTor(true); }
       s.appendChild(nm);
       s.appendChild(el("span", "p-stats", `${nf.format(p.requests_24h)} req · ${p.fallback === "tor" ? nf.format(p.tor_24h) + " Tor · " : ""}${nf.format(p.denied_24h)} refus`));
       s.appendChild(el("span", "p-nets", p.networks.length ? p.networks.join(", ") : "tous les clients (mode legacy)"));
@@ -330,6 +330,7 @@ document.addEventListener("DOMContentLoaded", () => {
       };
       list("Domaines", p.domains);
       if (p.ips.length) list("IP", p.ips);
+      if (p.fallback === "tor" && p.tor_restricted) list("Domaines via Tor", p.tor_domains);
       d.appendChild(body); box.appendChild(d);
     }
     if (unmatched_24h) box.appendChild(el("p", "p-warn", `${nf.format(unmatched_24h)} requête(s) sans profil sur 24 h (client hors réseaux déclarés).`));

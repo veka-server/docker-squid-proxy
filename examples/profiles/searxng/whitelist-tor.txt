@@ -1,0 +1,4 @@
+# Sortent par Tor ; tout ce qui n'est dans aucune liste est refusé
+duckduckgo.com
+html.duckduckgo.com
+search.brave.com

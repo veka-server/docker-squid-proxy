@@ -30,6 +30,10 @@
 # envoyées vers le proxy SOCKS de Tor (TOR_SOCKS=hôte:port) via un pont local ;
 # la whitelist, elle, sort en direct. Les noms sont résolus par Tor (pas de DNS
 # local pour le trafic Tor).
+# Si whitelist-tor.txt existe (profiles/<nom>/whitelist-tor.txt, ou
+# /etc/squid/whitelist-tor.txt en mode legacy), seuls ses domaines partent vers
+# Tor : tout le reste hors whitelist est refusé, IP littérales comprises. Un
+# fichier vide refuse donc tout le repli Tor. Sans ce fichier : tout part vers Tor.
 #
 # Les fichiers (et les réseaux du conteneur) sont surveillés : toute modification
 # régénère la conf, la valide (squid -k parse) puis recharge squid à chaud.
@@ -38,6 +42,7 @@ set -eu
 PROFILES_DIR="${PROFILES_DIR:-/etc/squid/profiles}"
 LEGACY_WL="${LEGACY_WHITELIST:-/etc/squid/whitelist.txt}"
 LEGACY_WL_IPS="${LEGACY_WHITELIST_IPS:-/etc/squid/whitelist-ips.txt}"
+LEGACY_WL_TOR="${LEGACY_WHITELIST_TOR:-/etc/squid/whitelist-tor.txt}"
 SQUID_CONF="${SQUID_CONF:-/etc/squid/squid.conf}"
 SQUID_USER="${SQUID_USER:-squid}"
 UI_USER="${UI_USER:-squidui}"
@@ -258,8 +263,8 @@ EOF
                 echo "note profile $p p_${p}_src p_${p}_in"
                 who="p_${p}_src p_${p}_in "
             fi
-            if [ -z "$who" ]; then wl="$LEGACY_WL"; wl_ips="$LEGACY_WL_IPS"
-            else wl="$PROFILES_DIR/$p/whitelist.txt"; wl_ips="$PROFILES_DIR/$p/whitelist-ips.txt"; fi
+            if [ -z "$who" ]; then wl="$LEGACY_WL"; wl_ips="$LEGACY_WL_IPS"; wl_tor="$LEGACY_WL_TOR"
+            else wl="$PROFILES_DIR/$p/whitelist.txt"; wl_ips="$PROFILES_DIR/$p/whitelist-ips.txt"; wl_tor="$PROFILES_DIR/$p/whitelist-tor.txt"; fi
             not_ip=""; not_dom=""
             if has_entries "$wl_ips"; then
                 echo "acl wl_ip_$p dst \"$wl_ips\""
@@ -278,16 +283,29 @@ EOF
             fi
             if [ "$fb" = tor ]; then
                 tor_used=1
-                # Hors whitelist -> Tor. Les ACL utilisées ici sont toutes « rapides »
-                # (aucune résolution DNS locale des domaines envoyés à Tor).
-                echo "http_access allow ${who}ip_host" >> "$rules_tor_ip"
                 if [ -n "$not_dom" ]; then
                     # domaine en whitelist mais refusé à l'étape 4 (réseau interdit) : reste refusé
                     echo "http_access deny ${who}wl_dom_$p" >> "$rules_tor_dom"
                 fi
-                echo "http_access allow ${who%?}" >> "$rules_tor_dom"
-                echo "${who}ip_host$not_ip" >> "$rules_route"
-                echo "${who}!ip_host$not_dom" >> "$rules_route"
+                if [ -f "$wl_tor" ]; then
+                    # Repli Tor restreint : seuls les domaines de whitelist-tor.txt
+                    # partent vers Tor, le reste tombe sur « deny all ». Les IP
+                    # littérales ne sont jamais envoyées à Tor dans ce mode.
+                    if has_entries "$wl_tor"; then
+                        echo "acl wl_tor_$p dstdomain -n \"$wl_tor\""
+                        echo "http_access allow ${who}wl_tor_$p" >> "$rules_tor_dom"
+                        echo "${who}!ip_host$not_dom wl_tor_$p" >> "$rules_route"
+                    else
+                        log "profil ${p} : whitelist-tor.txt vide, aucun domaine ne passe par Tor"
+                    fi
+                else
+                    # Hors whitelist -> Tor. Les ACL utilisées ici sont toutes « rapides »
+                    # (aucune résolution DNS locale des domaines envoyés à Tor).
+                    echo "http_access allow ${who}ip_host" >> "$rules_tor_ip"
+                    echo "http_access allow ${who%?}" >> "$rules_tor_dom"
+                    echo "${who}ip_host$not_ip" >> "$rules_route"
+                    echo "${who}!ip_host$not_dom" >> "$rules_route"
+                fi
             fi
         done
         # "allow " seul est invalide en mode legacy (who vide) : on le remplace par all.
@@ -314,11 +332,11 @@ EOF
             echo "http_access deny local_names_extra to_private"
         fi
         if [ -s "$rules_tor_dom" ]; then
-            echo "# 6. Profils FALLBACK=tor : tout le reste -> Tor"
+            echo "# 6. Profils FALLBACK=tor : reste -> Tor (limité à whitelist-tor.txt s'il existe)"
             cat "$rules_tor_dom"
         fi
         echo "http_access deny all"
-        if [ "$tor_used" = 1 ]; then
+        if [ "$tor_used" = 1 ] && [ -s "$rules_route" ]; then
             echo
             echo "# ===== Routage Tor (pont local HTTP->SOCKS5 vers $TOR_SOCKS) ====="
             echo "cache_peer 127.0.0.1 parent $TOR_BRIDGE_PORT 0 no-query no-digest no-netdb-exchange name=tor"
@@ -342,15 +360,16 @@ EOF
     } > "$acl_dir/dns-allow.txt"
 
     # Correspondance profil -> fichiers pour l'interface web.
-    # nom <TAB> whitelist <TAB> whitelist-ips <TAB> networks <TAB> repli
+    # nom <TAB> whitelist <TAB> whitelist-ips <TAB> networks <TAB> repli <TAB> whitelist-tor
+    tor_map() { if [ -f "$1" ]; then echo "$1"; else echo -; fi; }
     {
         if [ "$profile_mode" = 1 ]; then
             for p in $profiles; do
                 d="$PROFILES_DIR/$p"
-                printf '%s\t%s\t%s\t%s\t%s\n' "$p" "$d/whitelist.txt" "$d/whitelist-ips.txt" "$acl_dir/$p.networks" "$(profile_fallback "$p" 2>/dev/null)"
+                printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$p" "$d/whitelist.txt" "$d/whitelist-ips.txt" "$acl_dir/$p.networks" "$(profile_fallback "$p" 2>/dev/null)" "$(tor_map "$d/whitelist-tor.txt")"
             done
         else
-            printf '%s\t%s\t%s\t%s\t%s\n' default "$LEGACY_WL" "$LEGACY_WL_IPS" - "$(profile_fallback - 2>/dev/null)"
+            printf '%s\t%s\t%s\t%s\t%s\t%s\n' default "$LEGACY_WL" "$LEGACY_WL_IPS" - "$(profile_fallback - 2>/dev/null)" "$(tor_map "$LEGACY_WL_TOR")"
         fi
     } > "$acl_dir/profiles.map"
 }
@@ -360,7 +379,8 @@ checksum() {
         proxy_networks
         profile_state
         find "$PROFILES_DIR" "$EXTRA_CONF_DIR" -exec ls -ld {} \; 2>/dev/null
-        find "$PROFILES_DIR" "$LEGACY_WL" "$LEGACY_WL_IPS" "$EXTRA_CONF_DIR" -type f -exec md5sum {} \; 2>/dev/null
+        ls -ld "$LEGACY_WL_TOR" 2>/dev/null
+        find "$PROFILES_DIR" "$LEGACY_WL" "$LEGACY_WL_IPS" "$LEGACY_WL_TOR" "$EXTRA_CONF_DIR" -type f -exec md5sum {} \; 2>/dev/null
     } | sort | md5sum
 }
 

@@ -97,6 +97,29 @@ Le conteneur Tor doit être joignable par le proxy (par exemple sur son réseau 
 - **Hors whitelist** : sortie par Tor. Le nom est transmis à Tor, qui le résout (équivalent `socks5h`). Aucune requête DNS locale n'est émise et aucun DNSPort Tor n'est nécessaire.
 - **Toujours refusé, même en mode Tor** : les réseaux docker du proxy, localhost et link-local.
 - Si Tor est injoignable, la requête échoue (502). Elle ne repart **jamais** en direct.
+
+#### Restreindre le repli Tor à une liste (`whitelist-tor.txt`)
+
+Pour n'envoyer vers Tor que certains domaines, créez `whitelist-tor.txt` à côté de `whitelist.txt` (en mode simple : `/etc/squid/whitelist-tor.txt`). Même syntaxe que `whitelist.txt` (`.exemple.com` = domaine + sous-domaines).
+
+```
+profiles/searxng/
+├── profile.conf          # FALLBACK=tor
+├── whitelist.txt         # sortie directe
+└── whitelist-tor.txt     # sortie par Tor ; tout le reste est refusé
+```
+
+| Domaine demandé | Sans `whitelist-tor.txt` | Avec `whitelist-tor.txt` |
+|---|---|---|
+| dans `whitelist.txt` | direct | direct |
+| dans `whitelist-tor.txt` | Tor | Tor |
+| ailleurs | Tor | **refusé** |
+| IP littérale hors `whitelist-ips.txt` | Tor | **refusé** |
+
+- Un domaine présent dans les deux listes sort en direct (`whitelist.txt` est prioritaire).
+- Un `whitelist-tor.txt` **vide** refuse tout le repli Tor.
+- Les noms de cette liste ne passent pas par le filtre DNS : c'est Tor qui les résout.
+- Sans `FALLBACK=tor`, le fichier est ignoré.
 - En mode simple (whitelist unique), utilisez la variable `FALLBACK=tor`.
 
 Dans l'interface, ces requêtes apparaissent « Via Tor », et la liste « Hors whitelist » montre ce qui pourrait être ajouté à la whitelist.
